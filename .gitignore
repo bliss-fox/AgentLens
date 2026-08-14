@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+*.db
+*.egg-info/
+.env
+node_modules/
+dist/
+.vite/
+coverage/
+
+# Local resume source files and generated review artifacts are not part of AgentLens.
+resume_work/
+tools/
+*.docx
+/实习简历_项目版.md
+/简历证据与面试追问.md

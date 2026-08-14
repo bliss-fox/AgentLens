@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: agentlens
+      POSTGRES_USER: agentlens
+      POSTGRES_PASSWORD: agentlens
+    volumes: [agentlens_postgres:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentlens"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save 60 1
+    volumes: [agentlens_redis:/data]
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://agentlens:agentlens@postgres:5432/agentlens
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_started }
+    ports: ["8000:8000"]
+  worker:
+    build: ./backend
+    command: arq agentlens.worker.WorkerSettings
+    environment:
+      DATABASE_URL: postgresql+psycopg://agentlens:agentlens@postgres:5432/agentlens
+      REDIS_URL: redis://redis:6379/0
+    depends_on: [redis, postgres]
+  web:
+    build: ./frontend
+    depends_on: [api]
+    ports: ["5173:80"]
+volumes:
+  agentlens_postgres:
+  agentlens_redis:
+

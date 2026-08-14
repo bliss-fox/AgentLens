@@ -1,0 +1,201 @@
+{
+  "schema_version": "agentlens-benchmark-evidence/v1",
+  "generated_at": "2026-08-14T09:12:02.613877+00:00",
+  "command": "cd backend && python scripts/run_offline_benchmark.py",
+  "environment": {
+    "os": "Windows-11-10.0.22631-SP0",
+    "python": "3.12.13",
+    "mode": "deterministic_offline",
+    "external_api_calls": 0
+  },
+  "protocol": {
+    "tasks": 6,
+    "repetitions_per_task": 10,
+    "candidate_runs": 60,
+    "seeds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "bootstrap_seed": 2026,
+    "bootstrap_samples": 1500
+  },
+  "candidate": {
+    "id": "support-v1.4",
+    "successes": 49,
+    "failures": 11,
+    "metrics": {
+      "success_rate": 0.8166666666666667,
+      "success_interval": [
+        0.7166666666666667,
+        0.9
+      ],
+      "average_cost_cny": 0.04,
+      "cost_complete": true,
+      "average_tool_calls": 2.1,
+      "average_trajectory_score": 0.903,
+      "by_task": {
+        "task-1": {
+          "success_rate": 0.9,
+          "interval": [
+            0.5958499732047616,
+            0.9821237869049271
+          ],
+          "runs": 10
+        },
+        "task-2": {
+          "success_rate": 0.8,
+          "interval": [
+            0.4901624715366418,
+            0.9433178485456247
+          ],
+          "runs": 10
+        },
+        "task-3": {
+          "success_rate": 0.9,
+          "interval": [
+            0.5958499732047616,
+            0.9821237869049271
+          ],
+          "runs": 10
+        },
+        "task-4": {
+          "success_rate": 0.8,
+          "interval": [
+            0.4901624715366418,
+            0.9433178485456247
+          ],
+          "runs": 10
+        },
+        "task-5": {
+          "success_rate": 0.7,
+          "interval": [
+            0.3967781474611453,
+            0.8922087325936988
+          ],
+          "runs": 10
+        },
+        "task-6": {
+          "success_rate": 0.8,
+          "interval": [
+            0.4901624715366418,
+            0.9433178485456247
+          ],
+          "runs": 10
+        }
+      }
+    }
+  },
+  "baseline": {
+    "id": "support-v1.3",
+    "successes": 39,
+    "failures": 21,
+    "metrics": {
+      "success_rate": 0.65,
+      "success_interval": [
+        0.5333333333333333,
+        0.7666666666666667
+      ],
+      "average_cost_cny": 0.039,
+      "cost_complete": true,
+      "average_tool_calls": 2.0,
+      "average_trajectory_score": 0.803,
+      "by_task": {
+        "task-1": {
+          "success_rate": 0.7,
+          "interval": [
+            0.3967781474611453,
+            0.8922087325936988
+          ],
+          "runs": 10
+        },
+        "task-2": {
+          "success_rate": 0.7,
+          "interval": [
+            0.3967781474611453,
+            0.8922087325936988
+          ],
+          "runs": 10
+        },
+        "task-3": {
+          "success_rate": 0.7,
+          "interval": [
+            0.3967781474611453,
+            0.8922087325936988
+          ],
+          "runs": 10
+        },
+        "task-4": {
+          "success_rate": 0.6,
+          "interval": [
+            0.3126737697336583,
+            0.8318196702937638
+          ],
+          "runs": 10
+        },
+        "task-5": {
+          "success_rate": 0.6,
+          "interval": [
+            0.3126737697336583,
+            0.8318196702937638
+          ],
+          "runs": 10
+        },
+        "task-6": {
+          "success_rate": 0.6,
+          "interval": [
+            0.3126737697336583,
+            0.8318196702937638
+          ],
+          "runs": 10
+        }
+      }
+    }
+  },
+  "comparison": {
+    "difference": 0.16666666666666674,
+    "interval": [
+      0.007916666666666688,
+      0.3166666666666667
+    ],
+    "significant": true,
+    "message": "v1.4 显著优于 v1.3"
+  },
+  "failure_categories": {
+    "过早完成": 5,
+    "循环调用": 2,
+    "工具误用": 2,
+    "上下文丢失": 2
+  },
+  "judge_calibration": {
+    "total": 24,
+    "correct": 22,
+    "accuracy": 0.9166666666666666,
+    "passed": true,
+    "confusion_matrix": {
+      "tp": 15,
+      "tn": 7,
+      "fp": 1,
+      "fn": 1
+    },
+    "disagreements": [
+      "cal-08",
+      "cal-19"
+    ],
+    "mode": "deterministic_offline"
+  },
+  "persistence": {
+    "experiments": 1,
+    "runs": 60,
+    "events": 488
+  },
+  "run_digest_sha256": "03a0c29339726cd95c74781bb2380d0258534cccb6770390656fb2731173e6df",
+  "elapsed_seconds": 0.0591
+}
