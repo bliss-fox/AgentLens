@@ -1,103 +1,48 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
-from functools import lru_cache
+from agentlens import (
+    database_core,
+    experiment_repository,
+    review_repository,
+    tool_grant_repository,
+)
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+EXPECTED_SCHEMA_REVISION = database_core.EXPECTED_SCHEMA_REVISION
 
-from agentlens.config import get_settings
-from agentlens.models import Base, CandidateRecord, EventRecord, ExperimentRecord, RunRecord
-from agentlens.schemas import ExperimentSummary
+# Stable compatibility facade for integrations that still import agentlens.database.
+_as_utc = database_core.as_utc
+_database_lock = database_core.database_lock
+engine = database_core.engine
+init_database = database_core.init_database
+schema_revision = database_core.schema_revision
+session_factory = database_core.session_factory
+sessions = database_core.sessions
 
+_execution_payload = experiment_repository.execution_payload
+_summary_from_record = experiment_repository.summary_from_record
+claim_experiment = experiment_repository.claim_experiment
+compare_and_set_status = experiment_repository.compare_and_set_status
+latest_persisted_experiment = experiment_repository.latest_persisted_experiment
+list_persisted_experiments = experiment_repository.list_persisted_experiments
+load_execution_state = experiment_repository.load_execution_state
+load_experiment = experiment_repository.load_experiment
+mark_experiment_cancelled = experiment_repository.mark_experiment_cancelled
+mark_experiment_failed = experiment_repository.mark_experiment_failed
+mark_stale_experiment = experiment_repository.mark_stale_experiment
+mark_stale_experiments = experiment_repository.mark_stale_experiments
+persist_experiment = experiment_repository.persist_experiment
+persist_queued_experiment = experiment_repository.persist_queued_experiment
+persisted_counts = experiment_repository.persisted_counts
+update_experiment_progress = experiment_repository.update_experiment_progress
+update_experiment_status = experiment_repository.update_experiment_status
 
-@lru_cache
-def engine():
-    url = get_settings().database_url
-    options = {"check_same_thread": False} if url.startswith("sqlite") else {}
-    pool_options = {"poolclass": StaticPool} if ":memory:" in url else {}
-    return create_engine(url, pool_pre_ping=True, connect_args=options, **pool_options)
+FailureReviewClaim = review_repository.FailureReviewClaim
+claim_failure_review = review_repository.claim_failure_review
+persist_failure_review = review_repository.persist_failure_review
+release_failure_review_claim = review_repository.release_failure_review_claim
 
-
-@lru_cache
-def session_factory():
-    return sessionmaker(engine(), expire_on_commit=False)
-
-
-def init_database() -> None:
-    Base.metadata.create_all(engine())
-
-
-def sessions() -> Iterator[Session]:
-    with session_factory()() as session:
-        yield session
-
-
-def persist_experiment(experiment: ExperimentSummary) -> None:
-    """Persist the complete auditable experiment, including events, in one transaction."""
-    init_database()
-    with session_factory()() as session, session.begin():
-        for candidate in (experiment.candidate, experiment.baseline):
-            if session.get(CandidateRecord, candidate.id) is None:
-                session.add(CandidateRecord(
-                    id=candidate.id, name=candidate.name, version=candidate.version,
-                    fingerprint=candidate.model_dump(mode="json"),
-                ))
-        if session.get(ExperimentRecord, experiment.id) is not None:
-            return
-        record = ExperimentRecord(
-            id=experiment.id, status=experiment.status, prompt=experiment.prompt,
-            candidate_id=experiment.candidate.id, baseline_id=experiment.baseline.id,
-            snapshot={
-                "benchmark": experiment.benchmark_name,
-                "candidate": experiment.candidate.model_dump(mode="json"),
-                "baseline": experiment.baseline.model_dump(mode="json"),
-                "cassette": "customer-tools-v2:cassette-2026-08-12",
-                "price_table": "pricing-cny-2026-08",
-                "evaluator": "agentlens-evaluator@0.1.0",
-            },
-            metrics={
-                "metrics": experiment.metrics,
-                "comparison": experiment.comparison,
-                "calibration": experiment.judge_calibration,
-                "failures": experiment.failures,
-                "verdict": experiment.verdict,
-            },
-            created_at=experiment.created_at,
-        )
-        session.add(record)
-        for run in experiment.runs:
-            run_record = RunRecord(
-                id=run.run_id, experiment_id=experiment.id, task_id=run.task_id,
-                candidate_id=run.candidate_id, seed=run.seed,
-                status="completed", success=int(run.success), trajectory_score=run.trajectory_score,
-                cost_cny=run.cost_cny, result=run.model_dump(mode="json", exclude={"events"}),
-            )
-            session.add(run_record)
-            session.add_all([
-                EventRecord(
-                    run_id=run.run_id, seq=event.seq, type=event.type.value,
-                    payload=event.payload, timestamp=event.timestamp,
-                )
-                for event in run.events
-            ])
-
-
-def persisted_counts() -> dict[str, int]:
-    init_database()
-    with session_factory()() as session:
-        return {
-            "experiments": session.query(ExperimentRecord).count(),
-            "runs": session.query(RunRecord).count(),
-            "events": session.query(EventRecord).count(),
-        }
-
-
-def update_experiment_status(experiment_id: str, status: str) -> None:
-    """Keep cancellation/failure state auditable in the durable store."""
-    init_database()
-    with session_factory()() as session, session.begin():
-        record = session.get(ExperimentRecord, experiment_id)
-        if record is not None:
-            record.status = status
+consume_tool_grant = tool_grant_repository.consume_tool_grant
+issue_tool_grant = tool_grant_repository.issue_tool_grant
+maintain_tool_grants = tool_grant_repository.maintain_tool_grants
+revoke_tool_grant = tool_grant_repository.revoke_tool_grant
+tool_grant_token_hash = tool_grant_repository.tool_grant_token_hash

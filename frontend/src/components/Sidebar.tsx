@@ -25,8 +25,7 @@ export function Sidebar({ page, onPage }: { page: PageKey; onPage: (page: PageKe
       </nav>
       <div className="sidebar__spacer" />
       <button className="nav-item"><Settings size={19} /><span>设置</span></button>
-      <div className="sidebar__status"><Gauge size={14} /><span>离线演示模式</span></div>
+      <div className="sidebar__status"><Gauge size={14} /><span>本地真实服务</span></div>
     </aside>
   )
 }
-

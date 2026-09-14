@@ -1,14 +1,36 @@
 {
   "schema_version": "agentlens-benchmark-evidence/v1",
-  "generated_at": "2026-08-14T09:12:02.613877+00:00",
+  "generated_at": "2026-09-14T14:51:18.917462+00:00",
   "command": "cd backend && python scripts/run_offline_benchmark.py",
   "environment": {
     "os": "Windows-11-10.0.22631-SP0",
-    "python": "3.12.13",
+    "python": "3.12.14",
     "mode": "deterministic_offline",
     "external_api_calls": 0
   },
   "protocol": {
+    "benchmark_id": "customer-tools-v2",
+    "task_set_version": "customer-tools-v2@2026-08-12",
+    "task_snapshot_sha256": "86cbc7e5495a16860f4c84ac42e1f3a3aaf4d9ab27cd1ea65fc50b0a7992508b",
+    "calibration_version": "scripted-calibration@2026-08-12",
+    "evaluator_version": "agentlens-evaluator@0.1.0",
+    "price_table_version": "pricing-cny-2026-08",
+    "environment_snapshot": "customer-tools-v2:cassette-2026-08-12",
+    "cassette_contract": {
+      "environment_snapshot": "customer-tools-v2:cassette-2026-08-12",
+      "environment_snapshot_version": "cassette-2026-08-12",
+      "cassette": {
+        "id": "customer-tools-v2",
+        "mode": "replay",
+        "entries": 3,
+        "keys": [
+          "check_refund_policy:3cdd76d1918df3b8",
+          "get_order:3cdd76d1918df3b8",
+          "search_customer:72378aa178577458"
+        ],
+        "content_sha256": "35e9f0c3c6ad9da38aa2ee80c0f597c514269ee31bd8c4b6aaba608e279de7c5"
+      }
+    },
     "tasks": 6,
     "repetitions_per_task": 10,
     "candidate_runs": 60,
@@ -32,12 +54,12 @@
     "successes": 49,
     "failures": 11,
     "metrics": {
-      "success_rate": 0.8166666666666667,
+      "success_rate": 0.8166666666666668,
       "success_interval": [
         0.7166666666666667,
         0.9
       ],
-      "average_cost_cny": 0.04,
+      "average_cost_cny": 0.039,
       "cost_complete": true,
       "average_tool_calls": 2.1,
       "average_trajectory_score": 0.903,
@@ -103,7 +125,7 @@
         0.5333333333333333,
         0.7666666666666667
       ],
-      "average_cost_cny": 0.039,
+      "average_cost_cny": 0.038,
       "cost_complete": true,
       "average_tool_calls": 2.0,
       "average_trajectory_score": 0.803,
@@ -189,13 +211,13 @@
       "cal-08",
       "cal-19"
     ],
-    "mode": "deterministic_offline"
+    "mode": "scripted_calibration_fixture"
   },
   "persistence": {
     "experiments": 1,
-    "runs": 60,
-    "events": 488
+    "runs": 120,
+    "events": 966
   },
-  "run_digest_sha256": "03a0c29339726cd95c74781bb2380d0258534cccb6770390656fb2731173e6df",
-  "elapsed_seconds": 0.0591
+  "run_digest_sha256": "3914e98bfbfe91a1467e1d53063c4706d9988382866fb59f12792479257806b7",
+  "elapsed_seconds": 0.0762
 }

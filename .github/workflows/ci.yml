@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend quality and evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install backend
+        run: python -m pip install -e ".[dev]"
+      - name: Repository hygiene
+        run: python scripts/verify_repository_hygiene.py
+      - name: Ruff
+        working-directory: .
+        run: python -m ruff check --no-cache backend candidate_agent tool_runner service_tests
+      - name: Tests
+        run: python -m pytest -q
+      - name: Candidate adapter and constrained runner tests
+        working-directory: .
+        run: python -m pytest service_tests -q
+      - name: Reproduce offline evidence
+        run: python scripts/run_offline_benchmark.py
+      - name: Verify deterministic run, task, and cassette digests
+        run: >-
+          python -c "import json,pathlib;
+          data=json.loads(pathlib.Path('../evidence/offline-benchmark.json').read_text(encoding='utf-8'));
+          protocol=data['protocol'];
+          assert data['run_digest_sha256']=='3914e98bfbfe91a1467e1d53063c4706d9988382866fb59f12792479257806b7';
+          assert protocol['task_snapshot_sha256']=='86cbc7e5495a16860f4c84ac42e1f3a3aaf4d9ab27cd1ea65fc50b0a7992508b';
+          assert protocol['task_set_version']=='customer-tools-v2@2026-08-12';
+          assert protocol['calibration_version']=='scripted-calibration@2026-08-12';
+          assert protocol['evaluator_version']=='agentlens-evaluator@0.1.0';
+          assert protocol['price_table_version']=='pricing-cny-2026-08';
+          cassette=protocol['cassette_contract'];
+          assert cassette['environment_snapshot']=='customer-tools-v2:cassette-2026-08-12';
+          assert cassette['environment_snapshot_version']=='cassette-2026-08-12';
+          assert cassette['cassette']['mode']=='replay';
+          assert cassette['cassette']['entries']==3;
+          assert cassette['cassette']['content_sha256']=='35e9f0c3c6ad9da38aa2ee80c0f597c514269ee31bd8c4b6aaba608e279de7c5'"
+
+  frontend:
+    name: Frontend quality and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install frontend
+        run: pnpm install --frozen-lockfile
+      - name: ESLint
+        run: pnpm lint
+      - name: Tests
+        run: pnpm test
+      - name: Type-check and build
+        run: pnpm build
+
+  compose:
+    name: Compose Linux E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CANDIDATE_FAKE_MODEL: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose configuration
+        run: docker compose config --quiet
+      - name: Build and start Compose stack
+        run: docker compose -p agentlens_ci up -d --build postgres redis api worker
+      - name: Verify cross-process completion, cancellation, offline Judge, and failure
+        run: >-
+          docker compose -p agentlens_ci exec -T
+          -e AGENTLENS_VERIFY_OUTPUT=/tmp/agentlens-compose-verification.json
+          api python scripts/verify_compose_stack.py
+      - name: Copy Compose verification evidence
+        run: >-
+          docker compose -p agentlens_ci cp
+          api:/tmp/agentlens-compose-verification.json
+          evidence/compose-verification.json
+      - name: Upload Compose verification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentlens-compose-verification
+          path: evidence/compose-verification.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Show Compose logs on failure
+        if: failure()
+        run: docker compose -p agentlens_ci logs --no-color
+      - name: Tear down Compose stack
+        if: always()
+        run: docker compose -p agentlens_ci down -v --remove-orphans

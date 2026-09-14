@@ -11,31 +11,137 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
+    networks: [control]
   redis:
     image: redis:7-alpine
     command: redis-server --save 60 1
     volumes: [agentlens_redis:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks: [control]
+  migrate:
+    build: ./backend
+    command: alembic upgrade head
+    environment:
+      DATABASE_URL: postgresql+psycopg://agentlens:agentlens@postgres:5432/agentlens
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+    networks: [control]
+  tool-runner:
+    build: ./tool_runner
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks: [control]
+  candidate-agent:
+    build: ./candidate_agent
+    env_file:
+      - path: ${CANDIDATE_ENV_FILE:-../ai-coding-assistant/.env}
+        required: false
+    environment:
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      CANDIDATE_FAKE_MODEL: ${CANDIDATE_FAKE_MODEL:-false}
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+    depends_on:
+      tool-runner: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/ready', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks: [control, model]
   api:
     build: ./backend
+    env_file:
+      - path: ${CANDIDATE_ENV_FILE:-../ai-coding-assistant/.env}
+        required: false
     environment:
       DATABASE_URL: postgresql+psycopg://agentlens:agentlens@postgres:5432/agentlens
       REDIS_URL: redis://redis:6379/0
+      AGENT_ENDPOINTS: '${AGENT_ENDPOINTS:-{"coding-assistant-v1":"http://candidate-agent:8100"}}'
+      CANDIDATE_OVERRIDES: '${CANDIDATE_OVERRIDES:-{}}'
+      ENVIRONMENT_SNAPSHOT: coding-agent-v1:runner-2026-09-14
+      TOOL_GATEWAY_URL: http://api:8000/api/v1/tools/invoke
+      TOOL_RUNNER_URL: http://tool-runner:8200
+      EXECUTION_BACKEND: arq
+      JUDGE_PROVIDER: ${JUDGE_PROVIDER:-deepseek}
+      JUDGE_MODEL: ${JUDGE_MODEL:-deepseek-chat}
     depends_on:
-      postgres: { condition: service_healthy }
-      redis: { condition: service_started }
-    ports: ["8000:8000"]
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      worker: { condition: service_healthy }
+      candidate-agent: { condition: service_healthy }
+      tool-runner: { condition: service_healthy }
+    ports: ["127.0.0.1:8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks: [control, model]
   worker:
     build: ./backend
     command: arq agentlens.worker.WorkerSettings
+    env_file:
+      - path: ${CANDIDATE_ENV_FILE:-../ai-coding-assistant/.env}
+        required: false
     environment:
       DATABASE_URL: postgresql+psycopg://agentlens:agentlens@postgres:5432/agentlens
       REDIS_URL: redis://redis:6379/0
-    depends_on: [redis, postgres]
+      AGENT_ENDPOINTS: '${AGENT_ENDPOINTS:-{"coding-assistant-v1":"http://candidate-agent:8100"}}'
+      CANDIDATE_OVERRIDES: '${CANDIDATE_OVERRIDES:-{}}'
+      ENVIRONMENT_SNAPSHOT: coding-agent-v1:runner-2026-09-14
+      TOOL_GATEWAY_URL: http://api:8000/api/v1/tools/invoke
+      TOOL_RUNNER_URL: http://tool-runner:8200
+      JUDGE_PROVIDER: ${JUDGE_PROVIDER:-deepseek}
+      JUDGE_MODEL: ${JUDGE_MODEL:-deepseek-chat}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      candidate-agent: { condition: service_healthy }
+      tool-runner: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "arq", "--check", "agentlens.worker.WorkerSettings"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks: [control, model]
   web:
     build: ./frontend
-    depends_on: [api]
-    ports: ["5173:80"]
+    depends_on:
+      api: { condition: service_healthy }
+    ports: ["127.0.0.1:5173:80"]
+    networks: [control, ingress]
 volumes:
   agentlens_postgres:
   agentlens_redis:
-
+networks:
+  control:
+    internal: true
+  model:
+  ingress:

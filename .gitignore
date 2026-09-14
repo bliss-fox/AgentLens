@@ -1,15 +1,19 @@
 .venv/
 __pycache__/
 .pytest_cache/
+.pytest-tmp-*/
 .ruff_cache/
 *.pyc
 *.db
 *.egg-info/
 .env
+.env.*
+!.env.example
 node_modules/
 dist/
 .vite/
 coverage/
+/evidence/compose-verification*.json
 
 # Local resume source files and generated review artifacts are not part of AgentLens.
 resume_work/

@@ -10,9 +10,36 @@ export type Candidate = {
   name: string
   version: string
   model: string
+  model_parameters?: Record<string, unknown>
   prompt_hash: string
   scaffold_version: string
   tool_schema_hash: string
+  endpoint?: string | null
+}
+
+export type TaskSpec = {
+  id: string
+  name: string
+  input: Record<string, unknown>
+  initial_state: Record<string, unknown>
+  allowed_tools: string[]
+  assertions: Array<Record<string, unknown>>
+  required_communication: string[]
+  natural_language_assertions: string[]
+  reference_trajectory: Array<{ name: string; arguments: Record<string, unknown>; seq: number }>
+  trajectory_match_mode: 'strict' | 'unordered' | 'subset' | 'superset'
+  trajectory_required: boolean
+  repetitions: number
+  budget: Record<string, unknown>
+  thresholds: Record<string, unknown>
+}
+
+export type Benchmark = {
+  id: string
+  name: string
+  version: string
+  environment_snapshot: string
+  tasks: TaskSpec[]
 }
 
 export type FailureEvidence = {
@@ -24,6 +51,8 @@ export type FailureEvidence = {
   explanation: string
   judge_verdict: string
   confidence: string
+  judge_explanation?: string | null
+  judge_evidence_sequences: number[]
 }
 
 export type TraceEvent = {
@@ -62,12 +91,13 @@ export type Experiment = {
   status: 'queued' | 'running' | 'completed' | 'cancelled' | 'failed'
   prompt: string
   candidate: Candidate
-  baseline: Candidate
+  baseline: Candidate | null
   benchmark_name: string
   completed_runs: number
   total_runs: number
   plan: PlanStep[]
   runs: Run[]
+  baseline_runs: Run[]
   metrics: {
     success_rate: number
     success_interval: [number, number]
@@ -104,9 +134,9 @@ export type Experiment = {
 }
 
 export type BootstrapData = {
-  experiment: Experiment
+  experiment: Experiment | null
   candidates: Candidate[]
+  benchmarks?: Benchmark[]
   tasks: Array<Record<string, unknown>>
   calibration: Experiment['judge_calibration']
 }
-

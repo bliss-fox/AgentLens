@@ -1,14 +1,34 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from agentlens.evaluation import canonical_hash
+CASSETTE_CONTENT_SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
 
 class CassetteMissError(RuntimeError):
     pass
+
+
+def canonical_sha256(value: Any) -> str:
+    encoded = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def parse_environment_snapshot(value: str) -> tuple[str, str]:
+    if not isinstance(value, str) or value != value.strip() or any(
+        character.isspace() for character in value
+    ):
+        raise ValueError("environment snapshot must be <cassette-id>:<version>")
+    parts = value.split(":")
+    if len(parts) != 2 or not all(parts):
+        raise ValueError("environment snapshot must be <cassette-id>:<version>")
+    return parts[0], parts[1]
 
 
 @dataclass
@@ -18,7 +38,10 @@ class ToolCassette:
 
     @staticmethod
     def key(tool: str, arguments: dict[str, Any]) -> str:
-        return f"{tool}:{canonical_hash(arguments)}"
+        return f"{tool}:{canonical_sha256(arguments)[:16]}"
+
+    def content_sha256(self) -> str:
+        return canonical_sha256({"mode": self.mode, "records": self.records})
 
     def invoke(
         self, tool: str, arguments: dict[str, Any], live_call: Callable[[], dict[str, Any]] | None = None

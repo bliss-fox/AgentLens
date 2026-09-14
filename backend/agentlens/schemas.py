@@ -3,8 +3,26 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from agentlens.cassette import CASSETTE_CONTENT_SHA256_PATTERN, parse_environment_snapshot
+
+TOOL_GRANT_TOKEN_PATTERN = r"^[A-Za-z0-9_-]{32,200}$"
+
+
+def normalize_http_url(value: str, field_name: str) -> str:
+    if value != value.strip() or any(character.isspace() for character in value):
+        raise ValueError(f"{field_name} must be an absolute HTTP(S) URL")
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"{field_name} must be an absolute HTTP(S) URL")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError(
+            f"{field_name} must not contain credentials, query, or fragment"
+        )
+    return value.rstrip("/")
 
 
 class EventType(StrEnum):
@@ -30,16 +48,25 @@ class TraceEvent(BaseModel):
 
 
 class Usage(BaseModel):
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cached_tokens: int = 0
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    cached_tokens: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_cached_tokens(self) -> Usage:
+        if self.cached_tokens > self.input_tokens:
+            raise ValueError("cached_tokens cannot exceed input_tokens")
+        return self
 
 
 class Budget(BaseModel):
-    max_seconds: int = 180
-    max_tokens: int = 20_000
-    max_tool_calls: int = 30
-    max_cost_cny: float = 5.0
+    max_seconds: int = Field(default=180, ge=1, le=3_600)
+    max_tokens: int = Field(default=20_000, ge=1, le=10_000_000)
+    max_tool_calls: int = Field(default=30, ge=0, le=10_000)
+    max_events: int = Field(default=1_000, ge=3, le=100_000)
+    max_event_bytes: int = Field(default=262_144, ge=256, le=10_000_000)
+    max_stream_bytes: int = Field(default=4_194_304, ge=1_024, le=100_000_000)
+    max_cost_cny: float = Field(default=5.0, ge=0, le=100_000)
 
 
 class AgentRunRequest(BaseModel):
@@ -48,8 +75,21 @@ class AgentRunRequest(BaseModel):
     task_input: dict[str, Any]
     seed: int
     environment_snapshot: str
+    cassette_content_sha256: str = Field(pattern=CASSETTE_CONTENT_SHA256_PATTERN)
+    tool_grant_token: str = Field(pattern=TOOL_GRANT_TOKEN_PATTERN)
     tool_gateway_url: str
     budget: Budget = Field(default_factory=Budget)
+
+    @field_validator("environment_snapshot")
+    @classmethod
+    def validate_environment_snapshot(cls, value: str) -> str:
+        parse_environment_snapshot(value)
+        return value
+
+    @field_validator("tool_gateway_url")
+    @classmethod
+    def validate_tool_gateway_url(cls, value: str) -> str:
+        return normalize_http_url(value, "tool_gateway_url")
 
 
 class ToolCall(BaseModel):
@@ -99,6 +139,34 @@ class CandidateSpec(BaseModel):
     tool_schema_hash: str
     endpoint: str | None = None
 
+    @field_validator("endpoint")
+    @classmethod
+    def validate_endpoint(cls, endpoint: str | None) -> str | None:
+        if endpoint is None:
+            return None
+        return normalize_http_url(endpoint, "endpoint")
+
+
+class BenchmarkSpec(BaseModel):
+    id: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=160)
+    version: str = Field(min_length=1, max_length=120)
+    environment_snapshot: str
+    tasks: list[TaskSpec] = Field(min_length=1)
+
+    @field_validator("environment_snapshot")
+    @classmethod
+    def validate_benchmark_environment(cls, value: str) -> str:
+        parse_environment_snapshot(value)
+        return value
+
+    @model_validator(mode="after")
+    def task_ids_are_unique(self):
+        task_ids = [task.id for task in self.tasks]
+        if len(set(task_ids)) != len(task_ids):
+            raise ValueError("benchmark task IDs must be unique")
+        return self
+
 
 class FailureEvidence(BaseModel):
     category: str
@@ -109,6 +177,8 @@ class FailureEvidence(BaseModel):
     explanation: str
     judge_verdict: Literal["support", "conflict", "not_run"] = "not_run"
     confidence: Literal["low", "medium", "high"] = "high"
+    judge_explanation: str | None = None
+    judge_evidence_sequences: list[int] = Field(default_factory=list)
 
 
 class RunResult(BaseModel):
@@ -130,10 +200,11 @@ class RunResult(BaseModel):
 
 
 class ExperimentRequest(BaseModel):
-    prompt: str
+    prompt: str = Field(min_length=1, max_length=10_000)
     candidate_id: str = "support-v1.4"
-    baseline_candidate_id: str = "support-v1.3"
+    baseline_candidate_id: str | None = "support-v1.3"
     benchmark_id: str = "customer-tools-v2"
+    execution_mode: Literal["scripted", "http"] = "scripted"
     repetitions: int = Field(default=10, ge=1, le=50)
 
 
@@ -149,12 +220,13 @@ class ExperimentSummary(BaseModel):
     status: Literal["queued", "running", "completed", "cancelled", "failed"]
     prompt: str
     candidate: CandidateSpec
-    baseline: CandidateSpec
+    baseline: CandidateSpec | None = None
     benchmark_name: str
     completed_runs: int
     total_runs: int
     plan: list[PlanStep]
     runs: list[RunResult]
+    baseline_runs: list[RunResult] = Field(default_factory=list)
     metrics: dict[str, Any]
     comparison: dict[str, Any]
     judge_calibration: dict[str, Any]
@@ -171,7 +243,7 @@ class EventStreamValidator:
         self.next_seq = 0
         self.started = False
         self.terminal = False
-        self.saw_final_or_error = False
+        self.outcome_type: EventType | None = None
 
     def accept(self, event: TraceEvent) -> None:
         if event.run_id != self.run_id:
@@ -180,6 +252,8 @@ class EventStreamValidator:
             raise ValueError("event received after terminal event")
         if event.seq != self.next_seq:
             raise ValueError(f"expected sequence {self.next_seq}, received {event.seq}")
+        if self.outcome_type is not None and event.type != EventType.RUN_COMPLETED:
+            raise ValueError("final or error must be immediately followed by run.completed")
         if not self.started and event.type != EventType.RUN_STARTED:
             raise ValueError("first event must be run.started")
         if event.type == EventType.RUN_STARTED:
@@ -187,9 +261,9 @@ class EventStreamValidator:
                 raise ValueError("duplicate run.started event")
             self.started = True
         if event.type in {EventType.FINAL, EventType.ERROR}:
-            self.saw_final_or_error = True
+            self.outcome_type = event.type
         if event.type == EventType.RUN_COMPLETED:
-            if not self.saw_final_or_error:
+            if self.outcome_type is None:
                 raise ValueError("run.completed requires final or error event")
             self.terminal = True
         self.next_seq += 1

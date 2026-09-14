@@ -1,6 +1,6 @@
 # AgentLens 面试导览
 
-这份文档提供一条 5–10 分钟的项目核查路径。所有数字都能从仓库中的代码、测试或固定 benchmark 证据复算，不依赖口头描述。
+这份文档提供一条 3 分钟演示主线，并保留 5–10 分钟的深入核查入口。所有数字都能从仓库中的代码、测试或固定 benchmark 证据复算，不依赖口头描述。
 
 ## 1. 一句话判断
 
@@ -8,12 +8,11 @@ AgentLens 把“展示一次成功的 Agent Demo”升级为“可复现的工�
 
 ## 2. 建议演示路径
 
-1. 打开主工作台，查看候选 v1.4 与基线 v1.3 的成功率和 95% 区间。
-2. 切换到“实验对比”，确认两侧使用相同任务、种子和环境快照。
-3. 打开失败证据，查看一次循环调用如何关联到具体 trace event 区间和归因规则。
-4. 打开完整轨迹，检查 `run.started → tool.call/result → usage → final → run.completed`。
-5. 触发新实验并观察 SSE 进度；中途取消，确认终止状态不会被误报为完成。
-6. 展示 `evidence/offline-benchmark.json`，说明结果如何离线重建。
+1. **0:00–0:30，定位**：用主工作台说明 AgentLens 解决“Agent 是否稳定、为何失败、结论能否复现”。
+2. **0:30–1:10，对比**：展示候选 v1.4 与基线 v1.3 的成功率、95% 区间，以及相同任务、种子和环境快照。
+3. **1:10–1:50，证据**：打开一次失败归因和完整轨迹，定位规则 ID、事件区间与 `run.started → tool.call/result → usage → final → run.completed`。
+4. **1:50–2:30，运行语义**：触发新实验观察 SSE 进度，再取消一次，确认终态不会被覆盖。
+5. **2:30–3:00，可复现性**：展示 `evidence/offline-benchmark.json` 的固定配置与 digest；若远端 CI 已运行，再展示 `agentlens-compose-verification` artifact。
 
 ## 3. 三个最值得追问的设计点
 
@@ -23,23 +22,23 @@ AgentLens 把“展示一次成功的 Agent Demo”升级为“可复现的工�
 
 ### 为什么 Judge 不能直接决定对错？
 
-LLM Judge 本身也会漂移。项目先用 24 条人工标注样本校准，当前 22/24 一致；Judge 只复核确定性规则产生的证据。当 Judge 与规则冲突或置信度低时，保留人工复核，而不是覆盖事实断言。
+LLM Judge 本身也会漂移。当前离线演示使用 24 条脚本校准 fixture，得到 22/24 一致；这只验证校准与展示链路，不代表真实模型准确率。默认主链路未运行语义 Judge，因此证据明确标记 `not_run`。用户可以显式调用按需复核 API；API 只发送确定性归因范围内的事件，并在调用前执行凭据键脱敏和上下文字节上限；每次付费调用先领取可过期的数据库租约，避免多进程重复请求；已有结果只有显式 force 才复核。只有引用这些真实持久化事件的严格结构化结果才会原子写回，原始解释仍保留。接入真实标注集后，Judge 仍只应复核确定性规则产生的证据。
 
 ### 如何保证环境差异不污染 A/B？
 
-工具调用通过版本化 cassette record/replay。replay miss 直接返回环境错误，不访问真实网络。候选和基线共用任务、seed、快照与价格表，因此差异更接近候选版本变化，而不是外部服务数据或延迟变化。
+工具调用通过版本化 cassette record/replay。入队事务保存环境版本及内容 SHA-256；Worker 抢占前重算合同，并为每条 HTTP trial 签发只保存哈希、绑定 run/摘要/allowlist/预算/TTL 的 opaque grant。被测 Agent 每次 replay 原样回传 run、token 与摘要，网关用行锁逐次核验和扣减，trial 结束撤销。同名响应漂移、跨 run 复用、越权、过期、撤销、预算耗尽或 cassette miss 都 fail closed，且不访问真实网络。
 
 ## 4. 代码核查入口
 
 | 想核查的问题 | 文件 | 重点 |
 | --- | --- | --- |
 | 轨迹是不是严格校验 | `backend/agentlens/schemas.py` | `EventStreamValidator` 的顺序与终止不变量 |
-| HTTP/SSE 错误如何归一化 | `backend/agentlens/agent_client.py` | Content-Type、坏 JSON、超时和状态码处理 |
+| HTTP/SSE 错误如何归一化 | `backend/agentlens/agent_client.py`、`runtime.py` | Content-Type、坏 JSON、超时、取消、大小预算和状态码处理 |
 | 统计结论怎么算 | `backend/agentlens/evaluation.py` | Wilson、分层 bootstrap 与 paired bootstrap |
 | 失败证据是不是可定位 | `backend/agentlens/evaluation.py` | `FailureEvidence`、事件范围、规则 ID 和严重级别 |
-| 工具环境是否 fail closed | `backend/agentlens/cassette.py` | replay miss 不允许真实调用 |
-| 评测流程是否可审计 | `backend/agentlens/orchestrator.py` | 固定 LangGraph 节点与状态转换 |
-| 前端是否真的消费流式事件 | `frontend/src/api.ts` | progress/result/cancelled/error 四类事件 |
+| 工具环境是否 fail closed | `backend/agentlens/cassette.py`、`database.py`、`tool_gateway.py`、`runtime.py` | 内容冻结加 run-scoped grant；跨 run、越权、过期、撤销、预算耗尽或 miss 均拒绝 |
+| 异步流程是否可审计 | `backend/agentlens/store.py`、`database.py`、`worker.py` | 数据库状态机、原子抢占、真实进度、取消与 ARQ 跨进程执行 |
+| 前端是否真的消费流式事件 | `frontend/src/api.ts`、`App.test.tsx` | progress/result/cancelled/error 四类事件；失败快照替换旧运行状态 |
 | 结论能否重建 | `backend/scripts/run_offline_benchmark.py` | 固定种子、采样参数与证据写入 |
 
 ## 5. 现场验证
@@ -51,14 +50,14 @@ cd backend
 .\.venv\Scripts\python.exe scripts\run_offline_benchmark.py
 ```
 
-期望看到后端测试全部通过、Ruff 无错误，并重新生成 `evidence/offline-benchmark.json`。证据中的 `run_digest_sha256` 用于确认规范化运行内容是否一致；生成时间与本地耗时允许变化。
+期望看到后端测试全部通过、Ruff 无错误，并重新生成 `evidence/offline-benchmark.json`。证据中的 `task_snapshot_sha256` 用于确认完整任务定义一致，`cassette_contract.cassette.content_sha256` 用于确认工具响应内容一致，`run_digest_sha256` 用于确认规范化运行内容一致；生成时间与本地耗时允许变化。
 
 ## 6. 边界与诚实说明
 
 - 内置候选是确定性脚本，只用于验证评测系统，不代表真实大模型效果。
 - 当前 6 个任务 × 10 个 seed 的样本能演示统计方法，但不足以代表复杂生产分布。
-- LangGraph 节点中分析与报告步骤目前共享已生成的离线实验对象；生产化后应拆为可重试、幂等的 Worker 任务。
-- Docker 方案包含 PostgreSQL 与 Redis/ARQ，但现有自动化测试以进程内 SQLite 为主；完整基础设施集成测试仍需补充。
+- 当前 ARQ 以整个实验为一个幂等抢占任务；更大规模场景可进一步拆成按 run 分片、可重试的 Worker 任务。
+- 仓库提供 `verify_compose_stack.py` 验证 PostgreSQL、Redis/ARQ、SSE、取消和 grant 有界保留的跨进程链路，并用 MockTransport 测试验收判定；本地真实容器运行需要 Docker Linux Engine；GitHub Actions 的 Compose job 会在 Ubuntu runner 上执行该真实基础设施验收并上传机器可读 artifact。
 - 系统不负责沙箱化被测 Agent；不可信候选应在容器或 VM 中运行。
 
 ## 7. 下一阶段优先级

@@ -1,72 +1,62 @@
 from __future__ import annotations
 
+import operator
+from collections.abc import Callable, Mapping
 from itertools import pairwise
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
-from agentlens.schemas import ExperimentRequest
-from agentlens.store import store
+from langgraph.graph import END, START, StateGraph
 
-try:
-    from langgraph.graph import END, StateGraph
-except ImportError:  # deterministic offline fallback for minimal test environments
-    END = "__end__"
-    StateGraph = None
-
-
-class EvaluationState(TypedDict, total=False):
-    request: ExperimentRequest
-    experiment_id: str
-    environment_snapshot: str
-    judge_accuracy: float
-    completed_runs: int
-    report_ready: bool
+WORKFLOW_STEPS = (
+    "snapshot_environment",
+    "calibrate_judge",
+    "run_trials",
+    "analyze_trajectories",
+    "attribute_failures",
+    "compare_candidates",
+    "generate_report",
+)
 
 
-def snapshot_environment(state: EvaluationState) -> dict:
-    return {"environment_snapshot": "customer-tools-v2:cassette-2026-08-12"}
+class EvaluationWorkflowState(TypedDict):
+    handlers: Mapping[str, Callable[[], None]]
+    completed_steps: Annotated[list[str], operator.add]
 
 
-def calibrate_judge(state: EvaluationState) -> dict:
-    return {"judge_accuracy": 22 / 24}
+def _workflow_node(name: str):
+    def execute(state: EvaluationWorkflowState) -> dict[str, list[str]]:
+        state["handlers"][name]()
+        return {"completed_steps": [name]}
+
+    execute.__name__ = name
+    return execute
 
 
-def run_trials(state: EvaluationState) -> dict:
-    result = store.create(state["request"])
-    return {"experiment_id": result.id, "completed_runs": result.completed_runs}
+def _compile_workflow():
+    builder = StateGraph(EvaluationWorkflowState)
+    for name in WORKFLOW_STEPS:
+        builder.add_node(name, _workflow_node(name))
+    builder.add_edge(START, WORKFLOW_STEPS[0])
+    for current, following in pairwise(WORKFLOW_STEPS):
+        builder.add_edge(current, following)
+    builder.add_edge(WORKFLOW_STEPS[-1], END)
+    return builder.compile()
 
 
-def analyze_trajectories(state: EvaluationState) -> dict:
-    return {}
+_EVALUATION_WORKFLOW = _compile_workflow()
 
 
-def attribute_failures(state: EvaluationState) -> dict:
-    return {}
-
-
-def compare_candidates(state: EvaluationState) -> dict:
-    return {}
-
-
-def generate_report(state: EvaluationState) -> dict:
-    return {"report_ready": True}
-
-
-def cancel_experiment(experiment_id: str):
-    return store.cancel(experiment_id)
-
-
-def build_evaluation_graph():
-    if StateGraph is None:
-        return None
-    graph = StateGraph(EvaluationState)
-    nodes = [snapshot_environment, calibrate_judge, run_trials, analyze_trajectories, attribute_failures, compare_candidates, generate_report]
-    for node in nodes:
-        graph.add_node(node.__name__, node)
-    graph.set_entry_point("snapshot_environment")
-    for left, right in pairwise(nodes):
-        graph.add_edge(left.__name__, right.__name__)
-    graph.add_edge("generate_report", END)
-    return graph.compile()
-
-
-evaluation_graph = build_evaluation_graph()
+def run_evaluation_workflow(handlers: Mapping[str, Callable[[], None]]) -> tuple[str, ...]:
+    missing = [name for name in WORKFLOW_STEPS if name not in handlers]
+    unexpected = [name for name in handlers if name not in WORKFLOW_STEPS]
+    if missing or unexpected:
+        raise ValueError(
+            f"invalid evaluation workflow handlers: missing={missing}, unexpected={unexpected}"
+        )
+    result = _EVALUATION_WORKFLOW.invoke(
+        {"handlers": handlers, "completed_steps": []}
+    )
+    completed = tuple(result["completed_steps"])
+    if completed != WORKFLOW_STEPS:
+        raise RuntimeError("evaluation workflow did not complete every audited step")
+    return completed

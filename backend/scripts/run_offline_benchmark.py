@@ -11,8 +11,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
 
-from agentlens.database import persist_experiment, persisted_counts
-from agentlens.demo import build_demo_experiment
+from agentlens.config import (
+    BENCHMARK_ID,
+    CALIBRATION_VERSION,
+    EVALUATOR_VERSION,
+    PRICE_TABLE_VERSION,
+    TASK_SET_VERSION,
+    get_settings,
+)
+from agentlens.demo import TASKS, build_demo_experiment
+from agentlens.execution_contract import build_experiment_snapshot
+from agentlens.experiment_repository import persist_experiment, persisted_counts
+from agentlens.tool_gateway import registry
 
 
 def parse_args() -> argparse.Namespace:
@@ -29,8 +39,24 @@ def main() -> None:
         "benchmark-offline-6x10",
         "Fixed offline portfolio benchmark: 6 tasks x 10 repetitions",
     )
-    persist_experiment(experiment)
+    environment_snapshot = get_settings().environment_snapshot
+    snapshot = build_experiment_snapshot(
+        experiment,
+        TASKS,
+        environment_snapshot=environment_snapshot,
+        cassette_contract=registry.environment_contract(environment_snapshot),
+    )
+    persist_experiment(experiment, snapshot=snapshot)
     elapsed = perf_counter() - started
+    task_snapshot = [task.model_dump(mode="json") for task in TASKS]
+    task_snapshot_digest = hashlib.sha256(
+        json.dumps(
+            task_snapshot,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
     stable_runs = [
         run.model_dump(mode="json", exclude={"events"})
         for run in experiment.runs
@@ -38,8 +64,12 @@ def main() -> None:
     run_digest = hashlib.sha256(
         json.dumps(stable_runs, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
+    candidate_run_count = len(experiment.runs)
+    baseline_run_count = len(experiment.baseline_runs)
     successes = sum(run.success for run in experiment.runs)
+    baseline_successes = sum(run.success for run in experiment.baseline_runs)
     baseline_metrics = experiment.comparison["baseline_metrics"]
+    cassette_contract = registry.environment_contract(environment_snapshot)
     evidence = {
         "schema_version": "agentlens-benchmark-evidence/v1",
         "generated_at": datetime.now(UTC).isoformat(),
@@ -51,9 +81,17 @@ def main() -> None:
             "external_api_calls": 0,
         },
         "protocol": {
-            "tasks": 6,
+            "benchmark_id": BENCHMARK_ID,
+            "task_set_version": TASK_SET_VERSION,
+            "task_snapshot_sha256": task_snapshot_digest,
+            "calibration_version": CALIBRATION_VERSION,
+            "evaluator_version": EVALUATOR_VERSION,
+            "price_table_version": PRICE_TABLE_VERSION,
+            "environment_snapshot": environment_snapshot,
+            "cassette_contract": cassette_contract,
+            "tasks": len(task_snapshot),
             "repetitions_per_task": 10,
-            "candidate_runs": experiment.total_runs,
+            "candidate_runs": candidate_run_count,
             "seeds": list(range(1, 11)),
             "bootstrap_seed": 2026,
             "bootstrap_samples": 1500,
@@ -61,14 +99,13 @@ def main() -> None:
         "candidate": {
             "id": experiment.candidate.id,
             "successes": successes,
-            "failures": experiment.total_runs - successes,
+            "failures": candidate_run_count - successes,
             "metrics": experiment.metrics,
         },
         "baseline": {
             "id": experiment.baseline.id,
-            "successes": round(baseline_metrics["success_rate"] * experiment.total_runs),
-            "failures": experiment.total_runs
-            - round(baseline_metrics["success_rate"] * experiment.total_runs),
+            "successes": baseline_successes,
+            "failures": baseline_run_count - baseline_successes,
             "metrics": baseline_metrics,
         },
         "comparison": {
