@@ -4,17 +4,31 @@
 
 AgentLens 是一个面向工具型 Agent 的全栈评测系统。它冻结任务、候选版本、工具环境和随机种子，重复运行候选与基线，通过严格的 HTTP/SSE 轨迹协议采集证据，并分别报告成功率、稳定性、轨迹质量、成本与失败归因。
 
+本仓库公开的数值结果来自**确定性的 scripted fixture（合成评测器自测）**，用于验证评测、统计、归因和报告链路能否稳定复现；它们不是 DeepSeek、OpenAI 或其他真实模型的效果 benchmark。真实模型候选与语义 Judge 的接入路径已经实现并由替身客户端测试，但当前仓库尚未发布可核验的真实模型实验 artifact，因此只声明“已实现 / 支持”，不声明“已验证 / 已达到”。
+
 ## 面试官 30 秒速览
 
 | 关注点 | 项目中的实现 | 可验证结果 |
 | --- | --- | --- |
-| 评测是否可复现 | 固定 6 个任务、10 个种子、工具 cassette、候选指纹与 bootstrap seed | 无模型 Key、无外网也可重放 120 次候选/基线运行 |
-| 结果是否稳定 | 分任务 Wilson 区间、分层 bootstrap、同任务同种子的配对 A/B bootstrap | v1.4 成功率 81.7%，相对 v1.3 提升 16.7 个百分点 |
+| 评测器是否可复现 | 固定 6 个任务、10 个种子、工具 cassette、候选指纹与 bootstrap seed | 无模型 Key、无外网也可重放 120 次 scripted 候选/基线运行 |
+| 合成结果是否稳定 | 分任务 Wilson 区间、分层 bootstrap、同任务同种子的配对 A/B bootstrap | scripted candidate fixture 成功率 81.7%，与 baseline fixture 的配对差值为 16.7 个百分点 |
 | 失败是否可定位 | 保存 typed trace event，并用确定性规则定位事件区间、规则 ID 与严重级别 | 候选与基线共 120 次运行持久化 966 个事件，可回查双方原始轨迹 |
-| Judge 结果是否可区分 | 离线演示使用 24 条脚本校准 fixture；未运行语义 Judge 时明确标记 `not_run` | fixture 22/24 一致；该数字不表述为真实模型准确率 |
-| 工程链路是否完整 | React 19 控制台 + FastAPI + PostgreSQL + Redis/ARQ + 真实 OpenAI-compatible 候选 + 受限工具容器 | 后端 202 项、候选/工具服务 10 项测试通过；前端 7 项测试、ESLint 与生产构建通过 |
+| Judge 结果是否可区分 | 离线演示使用 24 条固定校准 fixture；未运行语义 Judge 时明确标记 `not_run` | fixture agreement 为 22/24；该数字不是外部 Judge 模型准确率 |
+| 工程链路实现到哪里 | React 19 控制台 + FastAPI + PostgreSQL + Redis/ARQ + OpenAI-compatible 候选适配器 + 受限工具容器 | 后端 202 项、候选/工具服务 10 项测试通过；前端 7 项测试、ESLint 与生产构建通过；外部模型调用使用替身客户端 |
 
 完整机器可读证据见 [`evidence/offline-benchmark.json`](evidence/offline-benchmark.json)，架构边界与演进顺序见 [`docs/architecture.md`](docs/architecture.md)，面试演示与追问索引见 [`docs/interview-guide.md`](docs/interview-guide.md)。
+
+## 公开证据状态
+
+| 能力 | 状态 | 公开证据 | 证据能证明什么 |
+| --- | --- | --- | --- |
+| 合成评测器自测 | 可复现 | `demo.py`、`evaluation.py`、自动化测试与固定运行摘要 | 评测、配对比较、失败归因和报告生成可以离线复现 |
+| 真实模型候选接入 | 已实现、已使用替身测试 | OpenAI/DeepSeek-compatible 适配器、严格 SSE 与工具调用测试 | 接入路径和协议行为已经实现；不证明真实模型质量 |
+| 语义 Judge 接入 | 已实现、已使用替身测试 | provider adapter、租约、引用和原子写回测试 | Judge 编排和安全合同已经实现；不证明外部 Judge 准确率 |
+| 真实模型实验结果 | 未发布 | 暂无脱敏的运行配置、原始输出与报告 artifact | 本仓库不对真实模型成功率或版本提升作结果声明 |
+| PostgreSQL + Redis/ARQ Compose E2E | 公开验证待完成 | 验收器已实现；当前公开 CI 尚无成功 artifact | 在 CI 变绿并发布 artifact 前，不声明跨进程链路已公开验证 |
+
+本文使用以下证据用词：**已实现 / 支持**表示源码路径存在；**已测试**表示自动化测试覆盖该路径，测试可能使用本地依赖或替身；**已验证**表示已针对所述真实依赖执行并公开保存 artifact；**已达到**只用于绑定了数据集、配置和 artifact 的测量结果。
 
 ## 为什么做这个项目
 
@@ -31,7 +45,7 @@ AgentLens 的核心取舍是：**将结果正确性、轨迹质量、稳定性�
 
 ```mermaid
 flowchart LR
-    UI["React 评测工作台"] --> API["FastAPI：202 + typed SSE"]
+    UI["React 评测工作台"] --> API["FastAPI：HTTP 202 + typed SSE"]
     API --> DB["PostgreSQL / SQLite\n实验事实来源"]
     API --> LOCAL["本地独立线程"]
     API --> QUEUE["Redis + ARQ"]
@@ -39,7 +53,7 @@ flowchart LR
     LOCAL --> TRIALS["候选与基线重复试验"]
     WORKER --> TRIALS
     TRIALS --> AGENT["被测 Agent：HTTP/SSE 协议"]
-    AGENT --> MODEL["OpenAI / DeepSeek"]
+    AGENT --> MODEL["OpenAI / DeepSeek（按配置调用）"]
     AGENT --> GATEWAY["cassette 工具网关"]
     GATEWAY --> RUNNER["受限 Python 工具容器"]
     TRIALS --> EVAL["统计、归因与对比"]
@@ -60,14 +74,16 @@ ARQ 模式的 `/health` 同时校验数据库连接与 migration revision、Redi
 - **公平 A/B**：候选与基线共享任务、种子和环境快照，使用配对 bootstrap 估计差值区间，而不是只比较两个点估计。
 - **证据优先的归因**：确定性规则输出事件范围、规则 ID、严重级别和解释；可选 Judge 只在用户显式触发时复核，引用必须落在真实持久化事件范围内，不把参考轨迹或 LLM 判断当作唯一真值。
 - **诚实的成本统计**：只有收到 `usage` 事件才计算成本；数据不完整时明确标记，不做静默插补。`cached_tokens` 必须是 `input_tokens` 的子集，缓存输入只按缓存价计费，不与完整输入价重复累计。
-- **真实异步执行**：本地线程与 ARQ Worker 使用同一数据库状态机，逐条运行写入候选与基线的真实工作进度；重复 Worker 只能由 `queued` 原子抢占一次。合法最大评测的 ARQ timeout 按 50 次重复、6 个任务、候选/基线和单次 180 秒预算计算，不再受默认 300 秒任务超时误杀；Worker 协程取消会写入 `worker_interrupted` 终态，底层 `to_thread` runner 将任意非 `running` 权威状态作为协作停止信号，取消处理最多等待 2 秒完成线程回收。执行前会验证请求、候选、基线、完整任务快照、版本化评测合同与环境快照的一致性，损坏或不受支持的状态以脱敏错误落库，不会永久滞留在队列中。
+- **跨进程异步执行**：本地线程与 ARQ Worker 使用同一数据库状态机，逐条运行写入候选与基线的持久化工作进度；重复 Worker 只能由 `queued` 原子抢占一次。合法最大评测的 ARQ timeout 按 50 次重复、6 个任务、候选/基线和单次 180 秒预算计算，不再受默认 300 秒任务超时误杀；Worker 协程取消会写入 `worker_interrupted` 终态，底层 `to_thread` runner 将任意非 `running` 权威状态作为协作停止信号，取消处理最多等待 2 秒完成线程回收。执行前会验证请求、候选、基线、完整任务快照、版本化评测合同与环境快照的一致性，损坏或不受支持的状态以脱敏错误落库，不会永久滞留在队列中。
 - **流式与取消语义**：实验进度使用异步 SSE；同步 SQLAlchemy 读写通过工作线程卸载，取消、客户端断开和生产者异常都有独立终止语义，异常响应不会泄露内部 traceback；FastAPI 关闭时会先原子取消本地线程对应的实验，再限时等待线程退出。
 
-## 可复现实验结果
+## 可复现的合成评测器自测
 
-离线基准在 Windows 11、Python 3.12.13 上生成，外部 API 调用数为 0。
+> **证据边界：**以下结果来自仓库内的 deterministic scripted fixture。每个 candidate、task 和 seed 的失败模式由固定 fixture 定义，不涉及真实 DeepSeek/OpenAI 模型推理。这组结果用于回归验证轨迹分析、失败归因、配对统计、报告生成和运行摘要；不能用于证明某个真实模型或 Agent 版本的效果提升。
 
-| 指标 | 候选 v1.4 | 基线 v1.3 |
+离线合成基准在 Windows 11、Python 3.12.13 上生成，外部 API 调用数为 0。
+
+| scripted fixture 指标 | candidate fixture v1.4 | baseline fixture v1.3 |
 | --- | ---: | ---: |
 | 成功次数 | 49 / 60 | 39 / 60 |
 | 成功率 | 81.7% | 65.0% |
@@ -76,7 +92,7 @@ ARQ 模式的 `/health` 同时校验数据库连接与 migration revision、Redi
 | 平均工具调用数 | 2.1 | 2.0 |
 | 平均成本 | ¥0.039 / 任务 | ¥0.038 / 任务 |
 
-配对差值为 **+16.7 个百分点**，95% 区间为 **[+0.8, +31.7] 个百分点**。该离线样本下区间下界高于 0，因此判定 v1.4 显著优于 v1.3。此结论只适用于固定任务集与脚本候选，不外推为真实生产模型表现。
+scripted candidate fixture 与 baseline fixture 的配对差值为 **+16.7 个百分点**，95% 区间为 **[+0.8, +31.7] 个百分点**。在该固定 fixture 内，区间下界高于 0；这只验证配对统计与报告判定能够按预期工作，不表示任何真实模型或生产 Agent 获得了 16.7 个百分点的提升。
 
 ## 三分钟运行
 
@@ -127,10 +143,10 @@ Redis 7、候选 Agent 适配器和受限工具执行器。生产默认
 `CANDIDATE_FAKE_MODEL=true` 来验证跨进程合同且避免产生模型费用。
 
 页面中选择 `AI Coding Assistant` 和 `Coding Agent 核心任务集 / v1`，先点击
-“测试连接”，再运行每题 3 次 smoke；这会真实调用模型 18 次，并把 SSE 轨迹、
-usage、工具结果、成本与失败归因写入 PostgreSQL。Worker 会先通过一次 JSON 批量
-请求让 Judge 运行 24 条人工标注校准样本；准确率不足 90% 时语义结论不进入通过
-门槛。正式评测可切换为每题 10 次。
+“测试连接”，再运行每题 3 次 smoke。配置有效供应商与 Key 时，这条已实现的 HTTP/SSE
+路径会调用所选模型，并把 usage、工具结果、成本与失败归因写入 PostgreSQL；调用次数
+取决于任务、候选/基线和重复次数。编排阶段使用 24 条固定离线 fixture 做一致性校准，
+不会调用语义 Judge；语义复核只在用户显式触发时运行。正式评测可切换为每题 10 次。
 
 一次性 `migrate` 服务会先执行 `alembic upgrade head`；Worker 在迁移成功且 Redis
 健康后启动，API 等待 Worker 健康后启动，Web 再等待 API 健康。ARQ 模式
@@ -157,13 +173,13 @@ pnpm dev
 
 打开 <http://localhost:5173>。本地模式使用共享内存 SQLite 与独立执行线程；Docker 模式切换为 PostgreSQL、Redis 与独立 ARQ Worker。可选配置见 [`.env.example`](.env.example)。
 
-### 内置真实 Coding Agent 与自定义 HTTP Agent
+### 内置模型供应商适配器与自定义 HTTP Agent
 
-Compose 中的 `candidate-agent` 是真实 OpenAI-compatible 适配器，支持 OpenAI 与
-DeepSeek Tool Calling。前端创建的生产测评固定使用 `execution_mode=http`，不会静默
-切换 scripted fixture。适配器把模型工具调用路由到 AgentLens 授权网关，并输出严格
-的 typed SSE；DeepSeek 请求不会发送未文档化的 `seed` 参数，但 trial seed 仍会进入
-实验快照与轨迹，供重复运行分组和统计使用。
+Compose 中的 `candidate-agent` 实现了 OpenAI-compatible 适配器，支持 OpenAI 与
+DeepSeek Tool Calling；自动化测试使用替身客户端，不构成真实模型效果验证。前端创建
+的生产测评固定使用 `execution_mode=http`，不会静默切换 scripted fixture。适配器把模型
+工具调用路由到 AgentLens 授权网关，并输出严格的 typed SSE；DeepSeek 请求不会发送未
+文档化的 `seed` 参数，但 trial seed 仍会进入实验快照与轨迹，供重复运行分组和统计使用。
 
 要验证其他自定义 HTTP/SSE Agent，可先在仓库根目录启动合同示例：
 
@@ -255,7 +271,7 @@ event: trace
 data: {"run_id":"run-42","seq":5,"type":"run.completed","payload":{"status":"success"}}
 ```
 
-可运行实现见 [`examples/scripted_agent.py`](examples/scripted_agent.py)，其六个任务的 HTTP/SSE 合同由后端端到端测试直接验证。
+可运行实现见 [`examples/scripted_agent.py`](examples/scripted_agent.py)，其六个任务的 HTTP/SSE 合同由后端自动化协议测试覆盖。
 
 ## 验证与证据生成
 
@@ -275,7 +291,7 @@ cd ..
 docker compose config --quiet
 ```
 
-真实基础设施验收需要可用的 Docker Linux Engine。脚本会等待 API 就绪，验证 fail-closed 工具 miss、API → Redis/ARQ Worker → PostgreSQL 的完成路径、唯一 SSE 终止事件、取消不被覆盖以及审计计数增量，并输出首事件与完成耗时：
+运行 Compose 跨进程验收器需要可用的 Docker Linux Engine。脚本设计为等待 API 就绪，并检查 fail-closed 工具 miss、API → Redis/ARQ Worker → PostgreSQL 的完成路径、唯一 SSE 终止事件、取消不被覆盖以及审计计数增量；只有脚本成功完成并保存 JSON，才构成该环境的一次验证证据：
 
 ```powershell
 # 在仓库根目录执行
@@ -288,9 +304,9 @@ try {
 }
 ```
 
-GitHub Actions 工作流 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) 在 push、pull request 和手动触发时并行执行后端脱敏仓库卫生扫描、Ruff/测试/离线摘要、前端冻结安装/ESLint/Vitest/生产构建，以及 Ubuntu runner 上真实的 PostgreSQL + Redis + ARQ Compose E2E。工作流权限仅为 `contents: read`，不注入模型 Key；Compose job 显式设置 `CANDIDATE_FAKE_MODEL=true`，但仍通过 readiness 指纹握手和 `execution_mode=http` 走候选 SSE、工具网关与跨进程持久化主链路，不把外部 API 波动与费用带入 CI。pnpm 固定为 11.19.0，只有 esbuild 获准运行依赖构建脚本。验收器还会回填一个超过保留期的终态 grant，并要求健康维护路径报告实际清理；随后对同一失败连续发起两次无 Key 复核，要求两次均返回非重试型 `judge_unavailable` 503，以证明失败路径已释放数据库租约且确定性证据未改变。验收器仅在全部检查通过后原子写入 schema 为 `agentlens-compose-verification/v7`、包含候选运行时身份、Python/平台信息、grant retention 证据与耗时的 JSON。工作流会在 GitHub Ubuntu runner 内构建并启动栈、在 API 容器中运行同一验收器，将结果上传为 `agentlens-compose-verification` artifact，失败时输出日志并始终删除 volume。
+GitHub Actions 工作流 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) 定义了后端卫生扫描/Ruff/测试/离线摘要、前端冻结安装/ESLint/Vitest/生产构建，以及 Ubuntu runner 上的 PostgreSQL + Redis/ARQ Compose E2E。工作流不注入模型 Key；Compose job 使用 `CANDIDATE_FAKE_MODEL=true`，计划通过 `execution_mode=http` 验证候选 SSE、工具网关和跨进程持久化主链路。审计提交对应的公开运行中，后端和前端 job 已通过，但 Compose job 在拉取 `postgres:16-alpine` 时失败，验收器没有执行，也没有生成公开 artifact。因此当前只声明“验收器和 CI job 已实现”，不声明“Compose E2E 已公开验证”。成功运行时，验收器才会写入 `agentlens-compose-verification/v7` JSON 并由工作流上传为 `agentlens-compose-verification` artifact。
 
-离线基准记录运行环境、固定种子、bootstrap 配置、成功/失败计数、Judge 校准、持久化数量、耗时、版本化评测合同、完整 `TaskSpec` SHA-256、冻结 cassette 内容 SHA-256 与规范化运行 SHA-256。CI 同时断言任务指纹、cassette 合同和运行摘要。`elapsed_seconds` 仅表示本地确定性数据生成时间，不代表外部模型延迟。
+离线合成基准记录运行环境、固定种子、bootstrap 配置、成功/失败计数、fixture agreement、持久化数量、耗时、版本化评测合同、完整 `TaskSpec` SHA-256、冻结 cassette 内容 SHA-256 与规范化运行 SHA-256。CI 同时断言任务指纹、cassette 合同和运行摘要。`elapsed_seconds` 仅表示本地确定性数据生成时间，不代表外部模型延迟。
 
 ## 代码导览
 
@@ -322,7 +338,7 @@ GitHub Actions 工作流 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) 
 - record 模式只应连接操作者明确授权的服务；replay 模式不会在 cassette miss 后访问真实网络。
 - `judge.py` 提供显式按需的 OpenAI-compatible 语义复核；后台主链路和 CI 始终保持离线 `not_run`。只有用户点击或调用复核 API 且配置 Key 时才发送失败归因范围内的事件并产生潜在费用；凭据键脱敏和上下文限额降低暴露面，但不构成通用 PII 清洗。租约独占、过期接管、默认幂等、显式重复确认、三层证据核验、span lineage、禁用隐式重试、引用校验、严格响应验证、超时、客户端关闭、脱敏错误和原子双写已有测试。真实人工标注校准集仍是后续工作。
 - 当前是本地单用户 MVP，没有 RBAC、托管控制面、训练或自动优化能力；本地服务不应直接暴露到不可信网络。
-- 离线 scripted 候选只用于测试评测器自身的可复现性；真实 Coding Agent 测评会调用所配置的模型供应商，结果受模型版本、网络和供应商服务状态影响。
+- 离线 scripted 候选只用于测试评测器自身的可复现性。配置有效供应商与 Key 后，HTTP 候选路径支持调用真实模型，但结果受模型版本、网络和供应商服务状态影响；当前仓库没有发布可核验的真实模型实验 artifact。
 - Python 直接依赖声明了最低版本和兼容主版本上界，Node 使用冻结 lockfile，容器镜像固定主版本标签；但 Python 尚无全哈希 lockfile，镜像也未固定 digest，进一步加固仍需加入哈希锁、镜像 digest 与 SBOM。
 
 开发细节见 [`docs/development.md`](docs/development.md)。
