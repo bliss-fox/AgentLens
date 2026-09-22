@@ -4,6 +4,8 @@
 
 AgentLens 是一个面向工具型 Agent 的全栈评测系统。它冻结任务、候选版本、工具环境和随机种子，重复运行候选与基线，通过严格的 HTTP/SSE 轨迹协议采集证据，并分别报告成功率、稳定性、轨迹质量、成本与失败归因。
 
+[![CI](https://github.com/bliss-fox/AgentLens/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/bliss-fox/AgentLens/actions/workflows/ci.yml)
+
 本仓库公开的数值结果来自**确定性的 scripted fixture（合成评测器自测）**，用于验证评测、统计、归因和报告链路能否稳定复现；它们不是 DeepSeek、OpenAI 或其他真实模型的效果 benchmark。真实模型候选与语义 Judge 的接入路径已经实现并由替身客户端测试，但当前仓库尚未发布可核验的真实模型实验 artifact，因此只声明“已实现 / 支持”，不声明“已验证 / 已达到”。
 
 ## 面试官 30 秒速览
@@ -14,7 +16,7 @@ AgentLens 是一个面向工具型 Agent 的全栈评测系统。它冻结任务
 | 合成结果是否稳定 | 分任务 Wilson 区间、分层 bootstrap、同任务同种子的配对 A/B bootstrap | scripted candidate fixture 成功率 81.7%，与 baseline fixture 的配对差值为 16.7 个百分点 |
 | 失败是否可定位 | 保存 typed trace event，并用确定性规则定位事件区间、规则 ID 与严重级别 | 候选与基线共 120 次运行持久化 966 个事件，可回查双方原始轨迹 |
 | Judge 结果是否可区分 | 离线演示使用 24 条固定校准 fixture；未运行语义 Judge 时明确标记 `not_run` | fixture agreement 为 22/24；该数字不是外部 Judge 模型准确率 |
-| 工程链路实现到哪里 | React 19 控制台 + FastAPI + PostgreSQL + Redis/ARQ + OpenAI-compatible 候选适配器 + 受限工具容器 | 后端 202 项、候选/工具服务 10 项测试通过；前端 7 项测试、ESLint 与生产构建通过；外部模型调用使用替身客户端 |
+| 工程链路实现到哪里 | React 19 控制台 + FastAPI + PostgreSQL + Redis/ARQ + OpenAI-compatible 候选适配器 + 受限工具容器 | 后端 203 项、候选/工具服务 10 项测试通过；前端 7 项测试、ESLint 与生产构建通过；Ubuntu Compose E2E 已使用 fake provider 公开验证 |
 
 完整机器可读证据见 [`evidence/offline-benchmark.json`](evidence/offline-benchmark.json)，架构边界与演进顺序见 [`docs/architecture.md`](docs/architecture.md)，面试演示与追问索引见 [`docs/interview-guide.md`](docs/interview-guide.md)。
 
@@ -26,7 +28,13 @@ AgentLens 是一个面向工具型 Agent 的全栈评测系统。它冻结任务
 | 真实模型候选接入 | 已实现、已使用替身测试 | OpenAI/DeepSeek-compatible 适配器、严格 SSE 与工具调用测试 | 接入路径和协议行为已经实现；不证明真实模型质量 |
 | 语义 Judge 接入 | 已实现、已使用替身测试 | provider adapter、租约、引用和原子写回测试 | Judge 编排和安全合同已经实现；不证明外部 Judge 准确率 |
 | 真实模型实验结果 | 未发布 | 暂无脱敏的运行配置、原始输出与报告 artifact | 本仓库不对真实模型成功率或版本提升作结果声明 |
-| PostgreSQL + Redis/ARQ Compose E2E | 公开验证待完成 | 验收器已实现；当前公开 CI 尚无成功 artifact | 在 CI 变绿并发布 artifact 前，不声明跨进程链路已公开验证 |
+| PostgreSQL + Redis/ARQ Compose E2E | 已公开验证（fake provider） | [CI run 35718661033](https://github.com/bliss-fox/AgentLens/actions/runs/35718661033) 与 `agentlens-compose-verification` artifact | 证明 Ubuntu 上的 migration、PostgreSQL、Redis/ARQ、HTTP/SSE、取消、Tool Gateway、Web 入口和清理链路；不证明真实模型质量 |
+
+### 60 秒证据入口
+
+1. [架构与数据流](#架构与数据流)：先确认 API、Worker、Candidate、Tool Runner、PostgreSQL 与 Redis 的进程边界。
+2. [`evidence/offline-benchmark.json`](evidence/offline-benchmark.json)：检查固定任务、seed、统计参数、cassette 指纹和可复现 digest。
+3. [公开 Compose E2E](https://github.com/bliss-fox/AgentLens/actions/runs/35718661033)：查看 Linux runner 上完整 fake-provider 栈的成功步骤与机器可读 artifact。
 
 本文使用以下证据用词：**已实现 / 支持**表示源码路径存在；**已测试**表示自动化测试覆盖该路径，测试可能使用本地依赖或替身；**已验证**表示已针对所述真实依赖执行并公开保存 artifact；**已达到**只用于绑定了数据集、配置和 artifact 的测量结果。
 
@@ -357,15 +365,15 @@ docker compose config --quiet
 ```powershell
 # 在仓库根目录执行
 try {
-  docker compose -p agentlens_verify up -d --build postgres redis api worker
-  docker compose -p agentlens_verify exec -T -e AGENTLENS_VERIFY_OUTPUT=/tmp/agentlens-compose-verification.json api python scripts/verify_compose_stack.py
-  docker compose -p agentlens_verify cp api:/tmp/agentlens-compose-verification.json evidence/compose-verification.local.json
+  docker compose --env-file .env.example -p agentlens_verify up -d --build
+  docker compose --env-file .env.example -p agentlens_verify exec -T -e AGENTLENS_VERIFY_OUTPUT=/tmp/agentlens-compose-verification.json api python scripts/verify_compose_stack.py
+  docker compose --env-file .env.example -p agentlens_verify cp api:/tmp/agentlens-compose-verification.json evidence/compose-verification.local.json
 } finally {
-  docker compose -p agentlens_verify down -v --remove-orphans
+  docker compose --env-file .env.example -p agentlens_verify down -v --remove-orphans
 }
 ```
 
-GitHub Actions 工作流 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) 定义了后端卫生扫描/Ruff/测试/离线摘要、前端冻结安装/ESLint/Vitest/生产构建，以及 Ubuntu runner 上的 PostgreSQL + Redis/ARQ Compose E2E。工作流不注入模型 Key；Compose job 使用 `CANDIDATE_FAKE_MODEL=true`，计划通过 `execution_mode=http` 验证候选 SSE、工具网关和跨进程持久化主链路。审计提交对应的公开运行中，后端和前端 job 已通过，但 Compose job 在拉取 `postgres:16-alpine` 时失败，验收器没有执行，也没有生成公开 artifact。因此当前只声明“验收器和 CI job 已实现”，不声明“Compose E2E 已公开验证”。成功运行时，验收器才会写入 `agentlens-compose-verification/v7` JSON 并由工作流上传为 `agentlens-compose-verification` artifact。
+GitHub Actions 工作流 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) 定义了后端卫生扫描/Ruff/测试/离线摘要、前端冻结安装/ESLint/Vitest/生产构建，以及 Ubuntu runner 上的 PostgreSQL + Redis/ARQ Compose E2E。工作流不注入模型 Key；Compose job 使用仓库内 `.env.example` 与 fake provider，通过 `execution_mode=http` 验证候选 SSE、工具网关、跨进程持久化、Web 入口和清理链路。[公开运行 35718661033](https://github.com/bliss-fox/AgentLens/actions/runs/35718661033) 的三个 job 均通过；Compose job 上传的 `agentlens-compose-verification` artifact 记录 `schema_version=agentlens-compose-verification/v7`、`status=passed`、Alembic revision `0005_evaluation_assets`、ARQ/数据库/Worker 健康状态、6 条候选运行、取消 SSE 和 fail-closed Tool Gateway 证据。artifact 保留期为 14 天，运行步骤与日志继续保留；该证据验证工程链路，不是任何真实模型的效果 benchmark。
 
 离线合成基准记录运行环境、固定种子、bootstrap 配置、成功/失败计数、fixture agreement、持久化数量、耗时、版本化评测合同、完整 `TaskSpec` SHA-256、冻结 cassette 内容 SHA-256 与规范化运行 SHA-256。CI 同时断言任务指纹、cassette 合同和运行摘要。`elapsed_seconds` 仅表示本地确定性数据生成时间，不代表外部模型延迟。
 

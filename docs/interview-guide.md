@@ -12,7 +12,7 @@ AgentLens 把“展示一次成功的 Agent Demo”升级为“可复现的工�
 2. **0:30–1:10，对比**：展示候选 v1.4 与基线 v1.3 的成功率、95% 区间，以及相同任务、种子和环境快照。
 3. **1:10–1:50，证据**：打开一次失败归因和完整轨迹，定位规则 ID、事件区间与 `run.started → tool.call/result → usage → final → run.completed`。
 4. **1:50–2:30，运行语义**：触发新实验观察 SSE 进度，再取消一次，确认终态不会被覆盖。
-5. **2:30–3:00，可复现性**：展示 `evidence/offline-benchmark.json` 的固定配置与 digest；若远端 CI 已运行，再展示 `agentlens-compose-verification` artifact。
+5. **2:30–3:00，可复现性**：展示 `evidence/offline-benchmark.json` 的固定配置与 digest，再打开[公开 Compose E2E 运行](https://github.com/bliss-fox/AgentLens/actions/runs/35718661033)及其 `agentlens-compose-verification` artifact。
 
 ## 3. 三个最值得追问的设计点
 
@@ -57,7 +57,7 @@ cd backend
 - 内置候选是确定性脚本，只用于验证评测系统，不代表真实大模型效果。
 - 当前 6 个任务 × 10 个 seed 的样本能演示统计方法，但不足以代表复杂生产分布。
 - 当前 ARQ 以整个实验为一个幂等抢占任务；更大规模场景可进一步拆成按 run 分片、可重试的 Worker 任务。
-- 仓库提供 `verify_compose_stack.py` 验证 PostgreSQL、Redis/ARQ、SSE、取消和 grant 有界保留的跨进程链路，并用 MockTransport 测试验收判定；本地真实容器运行需要 Docker Linux Engine；GitHub Actions 的 Compose job 会在 Ubuntu runner 上执行该真实基础设施验收并上传机器可读 artifact。
+- 仓库提供 `verify_compose_stack.py` 验证 PostgreSQL、Redis/ARQ、SSE、取消和 grant 有界保留的跨进程链路，并用 MockTransport 测试验收判定；本地真实容器运行需要 Docker Linux Engine；[GitHub Actions run 35718661033](https://github.com/bliss-fox/AgentLens/actions/runs/35718661033) 已在 Ubuntu runner 上使用 fake provider 完成该基础设施验收并上传机器可读 artifact。它不证明真实模型质量。
 - 系统不负责沙箱化被测 Agent；不可信候选应在容器或 VM 中运行。
 
 ## 7. 下一阶段优先级

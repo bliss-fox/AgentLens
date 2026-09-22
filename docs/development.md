@@ -80,11 +80,11 @@ Compose 跨进程验收：
 ```powershell
 # 在仓库根目录执行
 try {
-  docker compose -p agentlens_verify up -d --build postgres redis api worker
-  docker compose -p agentlens_verify exec -T -e AGENTLENS_VERIFY_OUTPUT=/tmp/agentlens-compose-verification.json api python scripts/verify_compose_stack.py
-  docker compose -p agentlens_verify cp api:/tmp/agentlens-compose-verification.json evidence/compose-verification.local.json
+  docker compose --env-file .env.example -p agentlens_verify up -d --build
+  docker compose --env-file .env.example -p agentlens_verify exec -T -e AGENTLENS_VERIFY_OUTPUT=/tmp/agentlens-compose-verification.json api python scripts/verify_compose_stack.py
+  docker compose --env-file .env.example -p agentlens_verify cp api:/tmp/agentlens-compose-verification.json evidence/compose-verification.local.json
 } finally {
-  docker compose -p agentlens_verify down -v --remove-orphans
+  docker compose --env-file .env.example -p agentlens_verify down -v --remove-orphans
 }
 ```
 
