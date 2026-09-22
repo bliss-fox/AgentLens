@@ -94,59 +94,120 @@ ARQ 模式的 `/health` 同时校验数据库连接与 migration revision、Redi
 
 scripted candidate fixture 与 baseline fixture 的配对差值为 **+16.7 个百分点**，95% 区间为 **[+0.8, +31.7] 个百分点**。在该固定 fixture 内，区间下界高于 0；这只验证配对统计与报告判定能够按预期工作，不表示任何真实模型或生产 Agent 获得了 16.7 个百分点的提升。
 
-## 三分钟运行
+## Quick Start：三条独立验证路径
 
-### Docker Compose
+### A. Offline evaluator self-test
+
+不需要 API Key、Docker 或外部网络。这条路径只验证 synthetic evaluator、统计、failure rule、报告和 digest，不代表真实模型效果。
+
+PowerShell：
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe scripts\run_offline_benchmark.py `
+  --output "$env:TEMP\agentlens-offline-benchmark.json"
+```
+
+Linux / macOS：
+
+```bash
+cd backend
+python3 -m venv .venv
+./.venv/bin/python -m pip install -e ".[dev]"
+./.venv/bin/python scripts/run_offline_benchmark.py \
+  --output "${TMPDIR:-/tmp}/agentlens-offline-benchmark.json"
+```
+
+输出应包含固定 6 个任务、候选/基线各 60 次运行、失败分类、配对 bootstrap、24 条校准 fixture、持久化计数和 `run_digest_sha256`，并明确记录 `external_api_calls=0`。
+
+### B. Full-stack fake-provider demo
 
 要求：Docker Desktop 的 Linux 容器引擎可用。在 Windows 上需要启用 WSL 与
 `Virtual Machine Platform`；首次启用后必须重启 Windows。
 
-Compose 默认从相邻项目读取候选模型配置：
-`../ai-coding-assistant/.env`。也可以在 AgentLens 根目录 `.env` 中用
-`CANDIDATE_ENV_FILE` 指向别的位置。真实 Key 只放在这个未提交的环境文件中，
-不要写入仓库或命令行历史。
-
-DeepSeek 推荐配置：
-
-```dotenv
-LLM_PROVIDER=deepseek
-DEEPSEEK_API_KEY=<your-key>
-LLM_MODEL=deepseek-chat
-DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
-JUDGE_PROVIDER=deepseek
-JUDGE_MODEL=deepseek-chat
-```
-
-OpenAI 配置：
-
-```dotenv
-LLM_PROVIDER=openai
-OPENAI_API_KEY=<your-key>
-LLM_MODEL=gpt-4o
-OPENAI_BASE_URL=https://api.openai.com/v1
-JUDGE_PROVIDER=openai
-JUDGE_MODEL=gpt-4.1-mini
-```
-
-启动并检查：
+从仓库内样例创建本地配置。`.env` 已被 Git 忽略；不要把 API Key 写入仓库或命令行历史。
 
 ```powershell
+# PowerShell
+Copy-Item .env.example .env
+```
+
+```bash
+# Linux / macOS
+cp .env.example .env
+```
+
+样例默认 `CANDIDATE_FAKE_MODEL=true`，因此不需要 API Key。启动前只做静默配置校验，避免把展开后的环境变量和 secret 打印到终端或 CI 日志：
+
+```powershell
+docker compose config --quiet
 docker compose up -d --build
 docker compose ps
 Invoke-RestMethod http://127.0.0.1:8000/health
 ```
 
-打开 <http://127.0.0.1:5173>。Compose 会启动 Web、API、Worker、PostgreSQL 16、
-Redis 7、候选 Agent 适配器和受限工具执行器。生产默认
-`CANDIDATE_FAKE_MODEL=false`：缺少所选供应商 Key 时，候选 readiness 返回 503，
-整套服务会快速失败，不会退回死数据。只有 CI 显式设置
-`CANDIDATE_FAKE_MODEL=true` 来验证跨进程合同且避免产生模型费用。
+Linux / macOS 可用 `curl --fail http://127.0.0.1:8000/health` 检查健康状态。Compose 会真实启动 Web、API、ARQ Worker、PostgreSQL 16、Redis 7、Candidate 和 Tool Runner。
 
-页面中选择 `AI Coding Assistant` 和 `Coding Agent 核心任务集 / v1`，先点击
-“测试连接”，再运行每题 3 次 smoke。配置有效供应商与 Key 时，这条已实现的 HTTP/SSE
-路径会调用所选模型，并把 usage、工具结果、成本与失败归因写入 PostgreSQL；调用次数
-取决于任务、候选/基线和重复次数。编排阶段使用 24 条固定离线 fixture 做一致性校准，
-不会调用语义 Judge；语义复核只在用户显式触发时运行。正式评测可切换为每题 10 次。
+运行仓库自带的跨进程验收器：
+
+```powershell
+docker compose exec -T `
+  -e AGENTLENS_VERIFY_OUTPUT=/tmp/agentlens-compose-verification.json `
+  api python scripts/verify_compose_stack.py
+```
+
+打开 <http://127.0.0.1:5173> 查看由 API 持久化的实验。这条路径验证 PostgreSQL、Redis/ARQ、HTTP/SSE、取消、Candidate readiness、工具授权和 Tool Runner 调用；fake adapter 的任务结果不代表真实模型质量。
+
+### C. Real-model run
+
+仍然只使用仓库根目录的 `.env`。将 fake 模式关闭，并只填写所选供应商的 Key；另一供应商的 Key 保持为空。
+
+DeepSeek：
+
+```dotenv
+CANDIDATE_FAKE_MODEL=false
+LLM_PROVIDER=deepseek
+LLM_MODEL=deepseek-chat
+DEEPSEEK_API_KEY=<your-key>
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+JUDGE_PROVIDER=deepseek
+JUDGE_MODEL=deepseek-chat
+```
+
+OpenAI 或 OpenAI-compatible endpoint：
+
+```dotenv
+CANDIDATE_FAKE_MODEL=false
+LLM_PROVIDER=openai
+LLM_MODEL=<model-name>
+OPENAI_API_KEY=<your-key>
+OPENAI_BASE_URL=https://api.openai.com/v1
+JUDGE_PROVIDER=openai
+JUDGE_MODEL=<judge-model>
+```
+
+`JUDGE_*` 只配置按需语义复核；后台评测不会自动调用 Judge。启动并同步 Candidate 运行时身份：
+
+```powershell
+docker compose config --quiet
+docker compose up -d --build
+Invoke-RestMethod `
+  http://127.0.0.1:8000/api/v1/candidates/coding-assistant-v1/test `
+  -Method Post
+```
+
+Linux / macOS：
+
+```bash
+docker compose config --quiet
+docker compose up -d --build
+curl --fail -X POST \
+  http://127.0.0.1:8000/api/v1/candidates/coding-assistant-v1/test
+```
+
+readiness 响应会给出 provider、model、`prompt_hash`、`scaffold_version`、`tool_schema_hash` 和价格配置，并同步到持久化 Candidate。随后在 <http://127.0.0.1:5173> 选择 `AI Coding Assistant` 与 `Coding Agent 核心任务集 / v1`，先“测试连接”，再运行 smoke。实验快照会保存已同步的 Candidate 身份、任务、环境和运行配置；在另行发布脱敏 artifact 前，这仍只是本地 real-model run，不是公开 benchmark。
 
 一次性 `migrate` 服务会先执行 `alembic upgrade head`；Worker 在迁移成功且 Redis
 健康后启动，API 等待 Worker 健康后启动，Web 再等待 API 健康。ARQ 模式

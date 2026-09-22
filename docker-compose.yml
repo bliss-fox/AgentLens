@@ -50,12 +50,19 @@ services:
     networks: [control]
   candidate-agent:
     build: ./candidate_agent
-    env_file:
-      - path: ${CANDIDATE_ENV_FILE:-../ai-coding-assistant/.env}
-        required: false
     environment:
+      CANDIDATE_FAKE_MODEL: ${CANDIDATE_FAKE_MODEL:-true}
+      LLM_PROVIDER: ${LLM_PROVIDER:-deepseek}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-120}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      CANDIDATE_FAKE_MODEL: ${CANDIDATE_FAKE_MODEL:-false}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+      LLM_INPUT_PRICE_CNY_PER_MILLION: ${LLM_INPUT_PRICE_CNY_PER_MILLION:-2}
+      LLM_OUTPUT_PRICE_CNY_PER_MILLION: ${LLM_OUTPUT_PRICE_CNY_PER_MILLION:-8}
+      LLM_CACHED_PRICE_CNY_PER_MILLION: ${LLM_CACHED_PRICE_CNY_PER_MILLION:-0.5}
+      LLM_TOOL_COST_CNY: ${LLM_TOOL_COST_CNY:-0}
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
@@ -75,9 +82,6 @@ services:
     networks: [control, model]
   api:
     build: ./backend
-    env_file:
-      - path: ${CANDIDATE_ENV_FILE:-../ai-coding-assistant/.env}
-        required: false
     environment:
       DATABASE_URL: postgresql+psycopg://agentlens:agentlens@postgres:5432/agentlens
       REDIS_URL: redis://redis:6379/0
@@ -86,9 +90,18 @@ services:
       ENVIRONMENT_SNAPSHOT: coding-agent-v1:runner-2026-09-14
       TOOL_GATEWAY_URL: http://api:8000/api/v1/tools/invoke
       TOOL_RUNNER_URL: http://tool-runner:8200
+      TOOL_RUNNER_TIMEOUT_SECONDS: ${TOOL_RUNNER_TIMEOUT_SECONDS:-25}
       EXECUTION_BACKEND: arq
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
       JUDGE_PROVIDER: ${JUDGE_PROVIDER:-deepseek}
       JUDGE_MODEL: ${JUDGE_MODEL:-deepseek-chat}
+      JUDGE_TIMEOUT_SECONDS: ${JUDGE_TIMEOUT_SECONDS:-60}
+      JUDGE_MAX_CONTEXT_BYTES: ${JUDGE_MAX_CONTEXT_BYTES:-131072}
+      TOOL_GRANT_RETENTION_SECONDS: ${TOOL_GRANT_RETENTION_SECONDS:-604800}
+      TOOL_GRANT_CLEANUP_BATCH_SIZE: ${TOOL_GRANT_CLEANUP_BATCH_SIZE:-1000}
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -106,9 +119,6 @@ services:
   worker:
     build: ./backend
     command: arq agentlens.worker.WorkerSettings
-    env_file:
-      - path: ${CANDIDATE_ENV_FILE:-../ai-coding-assistant/.env}
-        required: false
     environment:
       DATABASE_URL: postgresql+psycopg://agentlens:agentlens@postgres:5432/agentlens
       REDIS_URL: redis://redis:6379/0
@@ -117,8 +127,17 @@ services:
       ENVIRONMENT_SNAPSHOT: coding-agent-v1:runner-2026-09-14
       TOOL_GATEWAY_URL: http://api:8000/api/v1/tools/invoke
       TOOL_RUNNER_URL: http://tool-runner:8200
+      TOOL_RUNNER_TIMEOUT_SECONDS: ${TOOL_RUNNER_TIMEOUT_SECONDS:-25}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
       JUDGE_PROVIDER: ${JUDGE_PROVIDER:-deepseek}
       JUDGE_MODEL: ${JUDGE_MODEL:-deepseek-chat}
+      JUDGE_TIMEOUT_SECONDS: ${JUDGE_TIMEOUT_SECONDS:-60}
+      JUDGE_MAX_CONTEXT_BYTES: ${JUDGE_MAX_CONTEXT_BYTES:-131072}
+      TOOL_GRANT_RETENTION_SECONDS: ${TOOL_GRANT_RETENTION_SECONDS:-604800}
+      TOOL_GRANT_CLEANUP_BATCH_SIZE: ${TOOL_GRANT_CLEANUP_BATCH_SIZE:-1000}
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }

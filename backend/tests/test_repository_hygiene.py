@@ -58,6 +58,22 @@ def test_direct_dependencies_have_lower_and_upper_bounds():
         assert "<" in dependency, f"direct dependency has no upper bound: {dependency}"
 
 
+def test_quick_start_has_no_external_environment_dependency():
+    root = Path(__file__).parents[2]
+    env_example = (root / ".env.example").read_text(encoding="utf-8")
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    public_config = f"{env_example}\n{compose}\n{readme}"
+
+    assert "../ai-coding-assistant" not in public_config
+    assert "CANDIDATE_ENV_FILE" not in public_config
+    assert "env_file:" not in compose
+    assert "CANDIDATE_FAKE_MODEL=true" in env_example
+    assert "A. Offline evaluator self-test" in readme
+    assert "B. Full-stack fake-provider demo" in readme
+    assert "C. Real-model run" in readme
+
+
 def test_repository_hygiene_is_a_ci_gate_and_local_artifacts_are_ignored():
     root = Path(__file__).parents[2]
     workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
