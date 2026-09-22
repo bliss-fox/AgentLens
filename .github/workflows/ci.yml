@@ -94,18 +94,32 @@ jobs:
       CANDIDATE_FAKE_MODEL: "true"
     steps:
       - uses: actions/checkout@v4
-      - name: Validate Compose configuration
-        run: docker compose config --quiet
-      - name: Build and start Compose stack
-        run: docker compose -p agentlens_ci up -d --build postgres redis api worker
+      - name: Validate documented Compose configuration
+        run: docker compose --env-file .env.example config --quiet
+      - name: Build and start full Compose stack
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if docker compose --env-file .env.example -p agentlens_ci up -d --build; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep "$((attempt * 10))"
+          done
       - name: Verify cross-process completion, cancellation, offline Judge, and failure
         run: >-
-          docker compose -p agentlens_ci exec -T
+          docker compose --env-file .env.example -p agentlens_ci exec -T
           -e AGENTLENS_VERIFY_OUTPUT=/tmp/agentlens-compose-verification.json
           api python scripts/verify_compose_stack.py
+      - name: Verify Web entry point
+        run: >-
+          curl --fail --show-error --retry 10 --retry-delay 2 --retry-all-errors
+          http://127.0.0.1:5173/
       - name: Copy Compose verification evidence
         run: >-
-          docker compose -p agentlens_ci cp
+          docker compose --env-file .env.example -p agentlens_ci cp
           api:/tmp/agentlens-compose-verification.json
           evidence/compose-verification.json
       - name: Upload Compose verification evidence
@@ -117,7 +131,7 @@ jobs:
           retention-days: 14
       - name: Show Compose logs on failure
         if: failure()
-        run: docker compose -p agentlens_ci logs --no-color
+        run: docker compose --env-file .env.example -p agentlens_ci logs --no-color
       - name: Tear down Compose stack
         if: always()
-        run: docker compose -p agentlens_ci down -v --remove-orphans
+        run: docker compose --env-file .env.example -p agentlens_ci down -v --remove-orphans

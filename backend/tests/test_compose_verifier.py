@@ -342,23 +342,33 @@ def test_compose_ci_runs_real_stack_and_always_tears_down():
     root = Path(__file__).parents[2]
     workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     dockerfile = (root / "backend" / "Dockerfile").read_text(encoding="utf-8")
-    start = "docker compose -p agentlens_ci up -d --build postgres redis api worker"
+    start = "docker compose --env-file .env.example -p agentlens_ci up -d --build"
     verify_step = (
         "- name: Verify cross-process completion, cancellation, offline Judge, and failure"
     )
+    web_step = "- name: Verify Web entry point"
     copy_step = "- name: Copy Compose verification evidence"
     upload_step = "- name: Upload Compose verification evidence"
-    teardown = "docker compose -p agentlens_ci down -v --remove-orphans"
+    teardown = "docker compose --env-file .env.example -p agentlens_ci down -v --remove-orphans"
 
     assert "name: Compose Linux E2E" in workflow
     assert "Verify deterministic run, task, and cassette digests" in workflow
     assert "86cbc7e5495a16860f4c84ac42e1f3a3aaf4d9ab27cd1ea65fc50b0a7992508b" in workflow
     assert "customer-tools-v2@2026-08-12" in workflow
     assert "scripted-calibration@2026-08-12" in workflow
+    assert "for attempt in 1 2 3" in workflow
+    assert "postgres redis api worker" not in workflow
     assert workflow.index(start) < workflow.index(verify_step)
-    assert workflow.index(verify_step) < workflow.index(copy_step)
+    assert workflow.index(verify_step) < workflow.index(web_step)
+    assert workflow.index(web_step) < workflow.index(copy_step)
     assert workflow.index(copy_step) < workflow.index(upload_step)
     assert workflow.index(upload_step) < workflow.index("actions/upload-artifact@v4")
+    compose_commands = [
+        line.strip() for line in workflow.splitlines() if "docker compose" in line
+    ]
+    assert compose_commands
+    assert all("docker compose --env-file .env.example" in line for line in compose_commands)
+    assert "http://127.0.0.1:5173/" in workflow
     assert "AGENTLENS_VERIFY_OUTPUT=/tmp/agentlens-compose-verification.json" in workflow
     assert "api:/tmp/agentlens-compose-verification.json" in workflow
     assert "evidence/compose-verification.json" in workflow
