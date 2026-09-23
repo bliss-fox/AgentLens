@@ -90,9 +90,6 @@ class ExperimentStore:
                 if request.baseline_candidate_id
                 else None
             )
-            '''
-            benchmark_name = {����� / v2"
-            '''
             benchmark_name = BENCHMARK_NAME
             task_set_version = "customer-tools-v2@2026-08-12"
             environment_snapshot = get_settings().environment_snapshot
